@@ -16,11 +16,18 @@
             <h1>✨ KPOP Music Player ✨</h1>
         </div>
         
-        <div class="download-section">
-            <div id="serverWarning">
+        <div class="download-section" id="downloadSection">
+            <div id="serverWarning" style="display: none;">
                 <strong>⚠️ Wrong Server Detected!</strong><br>
                 You're using port 5500 (Live Server). The download feature requires the Python server.<br>
                 <strong>Please run:</strong> <code>python3 server.py</code> and access <code>http://localhost:8000</code>
+            </div>
+            <div id="productionInfo" style="display: none;">
+                <strong>📱 Production Mode</strong><br>
+                Download feature is not available in production. To add new songs:<br>
+                1. Download locally: <code>python3 download_mp3.py "YOUTUBE_URL"</code><br>
+                2. Run: <code>python3 generate_playlist.py</code><br>
+                3. Push to GitHub (auto-deploys to Vercel)
             </div>
             <form class="download-form" id="downloadForm">
                 <input 
@@ -545,13 +552,41 @@
             }
         }
 
-        // Check if using wrong server
-        if (window.location.port === '5500' || window.location.hostname === '127.0.0.1' && window.location.port !== '8000') {
-            const warning = document.getElementById('serverWarning');
-            if (warning) {
-                warning.style.display = 'block';
+        // Check environment and show appropriate message
+        function checkEnvironment() {
+            const isLocalhost = window.location.hostname === 'localhost' || 
+                               window.location.hostname === '127.0.0.1' || 
+                               window.location.hostname === '';
+            const isProduction = window.location.hostname.includes('vercel.app') || 
+                                window.location.hostname.includes('vercel.com') ||
+                                (!isLocalhost && window.location.hostname !== '');
+            const isPythonServer = window.location.port === '8000';
+            const isLiveServer = window.location.port === '5500';
+            
+            const serverWarning = document.getElementById('serverWarning');
+            const productionInfo = document.getElementById('productionInfo');
+            const downloadForm = document.getElementById('downloadForm');
+            const alternativeInfo = document.querySelector('.alternative-info');
+            
+            if (isProduction) {
+                // Production environment (Vercel)
+                if (productionInfo) productionInfo.style.display = 'block';
+                if (downloadForm) downloadForm.style.display = 'none';
+                if (serverWarning) serverWarning.style.display = 'none';
+                if (alternativeInfo) alternativeInfo.style.display = 'none';
+            } else if (isLocalhost && !isPythonServer) {
+                // Local but wrong server
+                if (serverWarning) serverWarning.style.display = 'block';
+                if (productionInfo) productionInfo.style.display = 'none';
+            } else {
+                // Correct local environment
+                if (serverWarning) serverWarning.style.display = 'none';
+                if (productionInfo) productionInfo.style.display = 'none';
             }
         }
+        
+        // Run environment check
+        checkEnvironment();
 
         // Load playlist on page load
         loadPlaylist();
