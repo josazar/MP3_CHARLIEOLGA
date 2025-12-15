@@ -1,3 +1,3 @@
-yt-dlp>=2023.12.0
-requests>=2.31.0
+# Minimal dependencies for Vercel
+# Note: yt-dlp is too large for Vercel, use local scripts instead
 
