@@ -34,9 +34,14 @@ wheels/
 # Logs
 *.log
 
-# Environment
+# Environment & Secrets
 .env
 .env.local
+.env.*.local
+*.token
+*_token.txt
+github_token*
+.vercel
 
 # Audio files (hosted on GitHub Releases)
 audio/

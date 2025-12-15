@@ -23,11 +23,9 @@
                 <strong>Please run:</strong> <code>python3 server.py</code> and access <code>http://localhost:8000</code>
             </div>
             <div id="productionInfo" style="display: none;">
-                <strong>📱 Production Mode</strong><br>
-                Download feature is not available in production. To add new songs:<br>
-                1. Download locally: <code>python3 download_mp3.py "YOUTUBE_URL"</code><br>
-                2. Run: <code>python3 generate_playlist.py</code><br>
-                3. Push to GitHub (auto-deploys to Vercel)
+                <strong>✅ Production Mode - Download Enabled!</strong><br>
+                The download feature will automatically upload MP3s to GitHub Releases.<br>
+                This may take 1-2 minutes depending on video length. 🎵
             </div>
             <form class="download-form" id="downloadForm">
                 <input 
@@ -587,9 +585,9 @@
             const alternativeInfo = document.querySelector('.alternative-info');
             
             if (isProduction) {
-                // Production environment (Vercel)
+                // Production environment (Vercel) - Download now works!
                 if (productionInfo) productionInfo.style.display = 'block';
-                if (downloadForm) downloadForm.style.display = 'none';
+                if (downloadForm) downloadForm.style.display = 'block'; // Enable in production
                 if (serverWarning) serverWarning.style.display = 'none';
                 if (alternativeInfo) alternativeInfo.style.display = 'none';
             } else if (isLocalhost && !isPythonServer) {
