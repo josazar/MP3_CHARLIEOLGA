@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>✨ KPOP Music Player ✨</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="icon" type="image/png" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0%' y1='0%' x2='100%' y2='100%'><stop offset='0%' style='stop-color:%23ff6b9d'/><stop offset='50%' style='stop-color:%23c44569'/><stop offset='100%' style='stop-color:%23f8b500'/></linearGradient></defs><circle cx='50' cy='50' r='45' fill='url(%23g)'/><text x='50' y='70' font-size='60' text-anchor='middle' fill='white'>🎵</text></svg>">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/howler@2.2.4/dist/howler.min.js"></script>
+</head>
+<body>
+    <canvas id="visualizerCanvas"></canvas>
+    <div class="player-container" id="playerContainer">
+        <div class="drag-handle">
+            <h1>✨ KPOP Music Player ✨</h1>
+        </div>
+        
+        <div class="download-section">
+            <div id="serverWarning">
+                <strong>⚠️ Wrong Server Detected!</strong><br>
+                You're using port 5500 (Live Server). The download feature requires the Python server.<br>
+                <strong>Please run:</strong> <code>python3 server.py</code> and access <code>http://localhost:8000</code>
+            </div>
+            <form class="download-form" id="downloadForm">
+                <input 
+                    type="url" 
+                    class="url-input" 
+                    id="youtubeUrl" 
+                    placeholder="Paste YouTube URL here..." 
+                    required
+                >
+                <button type="submit" class="btn-download" id="downloadBtn">
+                    📥 Export video to MP3
+                </button>
+            </form>
+            <div class="download-status" id="downloadStatus"></div>
+            <div class="alternative-info">
+                <strong>💡 Alternative:</strong> Use command line: <code>python3 download_mp3.py "YOUTUBE_URL"</code>
+            </div>
+        </div>
+        
+        <div class="current-track">
+            <h2 id="currentTitle">No track selected</h2>
+            <p id="currentInfo">Select a track from the playlist</p>
+        </div>
+
+        <div class="controls">
+            <button class="btn" id="prevBtn" title="Previous">⏮</button>
+            <button class="btn btn-play" id="playPauseBtn" title="Play/Pause">▶</button>
+            <button class="btn" id="nextBtn" title="Next">⏭</button>
+        </div>
+
+        <div class="progress-container">
+            <div class="progress-bar" id="progressBar">
+                <div class="progress" id="progress"></div>
+            </div>
+            <div class="time-info">
+                <span id="currentTime">0:00</span>
+                <span id="duration">0:00</span>
+            </div>
+        </div>
+
+        <div class="volume-control">
+            <span>🔊</span>
+            <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="70">
+            <span id="volumeValue">70%</span>
+        </div>
+
+        <div class="playlist" id="playlist">
+            <div class="empty-playlist">Loading playlist...</div>
+        </div>
+    </div>
+
+    <script>
+        const playPauseBtn = document.getElementById('playPauseBtn');
+        const prevBtn = document.getElementById('prevBtn');
+        const nextBtn = document.getElementById('nextBtn');
+        const progressBar = document.getElementById('progressBar');
+        const progress = document.getElementById('progress');
+        const currentTimeEl = document.getElementById('currentTime');
+        const durationEl = document.getElementById('duration');
+        const volumeSlider = document.getElementById('volumeSlider');
+        const volumeValue = document.getElementById('volumeValue');
+        const currentTitle = document.getElementById('currentTitle');
+        const currentInfo = document.getElementById('currentInfo');
+        const playlistEl = document.getElementById('playlist');
+
+        let playlist = [];
+        let currentTrackIndex = 0;
+        let isPlaying = false;
+        let sound = null; // Howler.js sound instance
+        let soundId = null; // Howler.js sound ID for seeking
+        let progressInterval = null;
+
+        // Load playlist from playlist.json
+        async function loadPlaylist(keepCurrentTrack = false) {
+            try {
+                // Add cache-busting parameter to force reload
+                const cacheBuster = new Date().getTime();
+                const response = await fetch(`playlist.json?t=${cacheBuster}`);
+                if (!response.ok) {
+                    throw new Error('Playlist file not found');
+                }
+                
+                const newPlaylist = await response.json();
+                const previousTrackIndex = currentTrackIndex;
+                const wasPlaying = isPlaying;
+                
+                playlist = newPlaylist;
+                
+                if (playlist.length > 0) {
+                    renderPlaylist();
+                    
+                    // If keeping current track, try to maintain it
+                    if (keepCurrentTrack && previousTrackIndex < playlist.length) {
+                        // Track still exists, keep it
+                        const track = playlist[previousTrackIndex];
+                        currentTitle.textContent = track.title;
+                        currentInfo.textContent = `Track ${previousTrackIndex + 1} of ${playlist.length}`;
+                        currentTrackIndex = previousTrackIndex;
+                        if (wasPlaying) {
+                            loadTrack(previousTrackIndex, true);
+                        } else {
+                            loadTrack(previousTrackIndex, false);
+                        }
+                    } else {
+                        // Load first track or maintain selection if possible
+                        if (previousTrackIndex < playlist.length) {
+                            loadTrack(previousTrackIndex, wasPlaying);
+                        } else {
+                            loadTrack(0, false);
+                        }
+                    }
+                } else {
+                    playlistEl.innerHTML = '<div class="empty-playlist">No tracks in playlist. Run generate_playlist.py to scan for MP3 files.</div>';
+                }
+            } catch (error) {
+                console.error('Error loading playlist:', error);
+                playlistEl.innerHTML = '<div class="empty-playlist">Error loading playlist. Make sure playlist.json exists. Run: python3 generate_playlist.py</div>';
+            }
+        }
+
+        function renderPlaylist() {
+            if (playlist.length === 0) {
+                playlistEl.innerHTML = '<div class="empty-playlist">No tracks in playlist</div>';
+                return;
+            }
+
+            playlistEl.innerHTML = playlist.map((track, index) => `
+                <div class="playlist-item ${index === currentTrackIndex ? 'active' : ''}" 
+                     data-index="${index}" 
+                     onclick="loadTrack(${index}, true)">
+                    <span class="playlist-item-number">${index + 1}</span>
+                    <span class="playlist-item-title">${track.title}</span>
+                    <span class="playlist-item-duration" id="duration-${index}">--:--</span>
+                </div>
+            `).join('');
+
+            // Load durations for all tracks using Howler
+            playlist.forEach((track, index) => {
+                const tempSound = new Howl({
+                    src: [track.src],
+                    html5: false, // Use Web Audio API
+                    preload: true,
+                    onload: function() {
+                        const durationEl = document.getElementById(`duration-${index}`);
+                        if (durationEl && this.duration()) {
+                            durationEl.textContent = formatTime(this.duration());
+                        }
+                        // Clean up temporary sound
+                        this.unload();
+                    },
+                    onloaderror: function() {
+                        const durationEl = document.getElementById(`duration-${index}`);
+                        if (durationEl) {
+                            durationEl.textContent = '--:--';
+                        }
+                        this.unload();
+                    }
+                });
+            });
+        }
+
+        function loadTrack(index, autoPlay = false) {
+            if (index < 0 || index >= playlist.length) return;
+            
+            currentTrackIndex = index;
+            const track = playlist[index];
+            
+            // Stop and unload current sound
+            if (sound) {
+                sound.stop();
+                sound.unload();
+                sound = null;
+                soundId = null;
+            }
+            
+            // Clear progress interval
+            if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+            }
+            
+            // Update UI
+            currentTitle.textContent = track.title;
+            currentInfo.textContent = `Track ${index + 1} of ${playlist.length}`;
+            currentInfo.style.color = ''; // Reset error color if any
+            
+            // Trigger fireworks when track is selected
+            if (window.visualizer) {
+                window.visualizer.triggerFireworks();
+            }
+            
+            renderPlaylist();
+            
+            // Create new Howler sound instance with better streaming options
+            sound = new Howl({
+                src: [track.src],
+                html5: false, // Use Web Audio API for visualizer compatibility
+                preload: true, // Preload for better performance
+                autoplay: false,
+                volume: volumeSlider.value / 100,
+                onload: function() {
+                    // Update duration when loaded
+                    if (this.duration()) {
+                        durationEl.textContent = formatTime(this.duration());
+                    }
+                    // Connect visualizer analyser if available
+                    if (window.visualizer && window.visualizer.analyser) {
+                        window.visualizer.setupAudioAnalyzer();
+                    }
+                    if (autoPlay) {
+                        playTrack();
+                    }
+                },
+                onplay: function(id) {
+                    soundId = id; // Store the sound ID for seeking
+                    isPlaying = true;
+                    playPauseBtn.textContent = '⏸';
+                    playPauseBtn.title = 'Pause';
+                    // Start progress updates
+                    startProgressUpdates();
+                },
+                onpause: function() {
+                    isPlaying = false;
+                    playPauseBtn.textContent = '▶';
+                    playPauseBtn.title = 'Play';
+                    if (progressInterval) {
+                        clearInterval(progressInterval);
+                        progressInterval = null;
+                    }
+                },
+                onend: function() {
+                    nextTrack();
+                },
+                onerror: function(id, error) {
+                    console.error('Howler error:', error);
+                    let errorMsg = 'Unknown error';
+                    if (error === 1) {
+                        errorMsg = 'Network error - check if file exists';
+                    } else if (error === 2) {
+                        errorMsg = 'Decoding error - file may be corrupted';
+                    } else if (error === 3) {
+                        errorMsg = 'Format not supported';
+                    } else if (error === 4) {
+                        errorMsg = 'File format not supported';
+                    }
+                    currentInfo.textContent = `Error: ${errorMsg}`;
+                    currentInfo.style.color = '#d32f2f';
+                    isPlaying = false;
+                    playPauseBtn.textContent = '▶';
+                    playPauseBtn.title = 'Play';
+                }
+            });
+            
+            if (!autoPlay) {
+                isPlaying = false;
+                playPauseBtn.textContent = '▶';
+                playPauseBtn.title = 'Play';
+            }
+        }
+        
+        function startProgressUpdates() {
+            if (progressInterval) {
+                clearInterval(progressInterval);
+            }
+            progressInterval = setInterval(() => {
+                if (sound) {
+                    updateProgress(); // Update even when paused to show current position
+                }
+            }, 100); // Update every 100ms for smooth progress
+        }
+
+        function playTrack() {
+            if (!sound) {
+                console.log('No audio source loaded');
+                return;
+            }
+            
+            // Play and store the sound ID
+            soundId = sound.play();
+            // onplay event will update UI
+        }
+
+        function pauseTrack() {
+            if (sound) {
+                sound.pause();
+                // onpause event will update UI
+            }
+        }
+
+        function togglePlayPause() {
+            if (isPlaying) {
+                pauseTrack();
+            } else {
+                // If no track is loaded, load the first one
+                if (!sound && playlist.length > 0) {
+                    loadTrack(0, true);
+                } else if (sound) {
+                    playTrack();
+                }
+            }
+        }
+
+        function nextTrack() {
+            const nextIndex = (currentTrackIndex + 1) % playlist.length;
+            const wasPlaying = isPlaying;
+            loadTrack(nextIndex, wasPlaying); // Continue playing if it was playing
+        }
+
+        function prevTrack() {
+            const prevIndex = (currentTrackIndex - 1 + playlist.length) % playlist.length;
+            const wasPlaying = isPlaying;
+            loadTrack(prevIndex, wasPlaying); // Continue playing if it was playing
+        }
+
+        function formatTime(seconds) {
+            if (isNaN(seconds)) return '0:00';
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function updateProgress() {
+            if (!sound) return;
+            
+            // Get current time - use soundId if available, otherwise get from first playing sound
+            let current = 0;
+            if (soundId !== null) {
+                current = sound.seek(soundId) || 0;
+            } else if (sound.playing()) {
+                // Fallback: get from any playing sound
+                const playingIds = sound.playing();
+                if (playingIds.length > 0) {
+                    current = sound.seek(playingIds[0]) || 0;
+                    soundId = playingIds[0];
+                }
+            } else {
+                // Even if paused, show current position
+                if (soundId !== null) {
+                    current = sound.seek(soundId) || 0;
+                }
+            }
+            
+            const duration = sound.duration() || 0;
+            
+            if (duration) {
+                const percent = (current / duration) * 100;
+                progress.style.width = percent + '%';
+                currentTimeEl.textContent = formatTime(current);
+                durationEl.textContent = formatTime(duration);
+            }
+        }
+
+        function setProgress(e) {
+            // Don't seek if audio is not loaded
+            if (!sound) {
+                return;
+            }
+            
+            const duration = sound.duration();
+            if (!duration || duration === 0) {
+                return;
+            }
+            
+            const width = progressBar.clientWidth;
+            if (width === 0) return; // Prevent division by zero
+            
+            // Get click position relative to the progress bar
+            const rect = progressBar.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            
+            // Calculate the percentage and new time
+            const percent = Math.max(0, Math.min(1, clickX / width)); // Clamp between 0 and 1
+            const newTime = percent * duration;
+            
+            // Only set if it's a valid time
+            if (!isNaN(newTime) && isFinite(newTime) && newTime >= 0 && newTime <= duration) {
+                // If sound hasn't been played yet, we need to get an ID first
+                if (soundId === null) {
+                    // If not playing, we need to start it briefly to get an ID, then pause
+                    const wasPlaying = sound.playing().length > 0;
+                    if (!wasPlaying) {
+                        soundId = sound.play();
+                        sound.pause(soundId);
+                    } else {
+                        soundId = sound.playing()[0];
+                    }
+                }
+                
+                // Seek to the new position using the sound ID
+                if (soundId !== null) {
+                    sound.seek(newTime, soundId);
+                    updateProgress(); // Update immediately
+                }
+            }
+        }
+
+        function setVolume() {
+            const volume = volumeSlider.value / 100;
+            if (sound) {
+                sound.volume(volume);
+            }
+            volumeValue.textContent = volumeSlider.value + '%';
+        }
+
+        // Event listeners
+        playPauseBtn.addEventListener('click', togglePlayPause);
+        nextBtn.addEventListener('click', nextTrack);
+        prevBtn.addEventListener('click', prevTrack);
+        progressBar.addEventListener('click', setProgress);
+        volumeSlider.addEventListener('input', setVolume);
+
+        // Download form handler
+        const downloadForm = document.getElementById('downloadForm');
+        const youtubeUrlInput = document.getElementById('youtubeUrl');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const downloadStatus = document.getElementById('downloadStatus');
+
+        downloadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const url = youtubeUrlInput.value.trim();
+            
+            if (!url) {
+                showStatus('Please enter a YouTube URL', 'error');
+                return;
+            }
+
+            // Validate YouTube URL
+            if (!url.includes('youtube.com') && !url.includes('youtu.be')) {
+                showStatus('Please enter a valid YouTube URL', 'error');
+                return;
+            }
+
+            // Disable button and show processing
+            downloadBtn.disabled = true;
+            downloadBtn.textContent = '⏳ Processing...';
+            showStatus('Downloading and converting to MP3... This may take a moment.', 'processing');
+
+            try {
+                // Detect the correct server port
+                const baseUrl = window.location.origin;
+                const response = await fetch(`${baseUrl}/download`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url })
+                });
+
+                if (!response.ok && response.status === 404) {
+                    showStatus('❌ Server endpoint not found. Make sure you are using the Python server (python3 server.py) on port 8000, not Live Server.', 'error');
+                    downloadBtn.disabled = false;
+                    downloadBtn.textContent = '📥 Export video to MP3';
+                    return;
+                }
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showStatus(`✅ Successfully downloaded: ${data.title}`, 'success');
+                    youtubeUrlInput.value = '';
+                    
+                    // Show updating message
+                    const updatingMsg = document.createElement('div');
+                    updatingMsg.className = 'download-status processing';
+                    updatingMsg.textContent = '🔄 Updating playlist...';
+                    updatingMsg.style.marginTop = '10px';
+                    downloadStatus.parentNode.insertBefore(updatingMsg, downloadStatus.nextSibling);
+                    
+                    // Reload playlist after a delay to ensure server has regenerated it
+                    // Try multiple times in case the server needs more time
+                    let attempts = 0;
+                    const maxAttempts = 5;
+                    
+                    const refreshPlaylist = async () => {
+                        attempts++;
+                        await loadPlaylist(true); // Keep current track if possible
+                        
+                        // Check if new track was added
+                        if (playlist.length > 0) {
+                            updatingMsg.remove();
+                            showStatus(`✅ Playlist updated! ${playlist.length} track(s) available.`, 'success');
+                            
+                            // Scroll to bottom to show new track
+                            const playlistItems = playlistEl.querySelectorAll('.playlist-item');
+                            if (playlistItems.length > 0) {
+                                playlistItems[playlistItems.length - 1].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            }
+                        } else if (attempts < maxAttempts) {
+                            // Retry after a short delay
+                            setTimeout(refreshPlaylist, 1000);
+                        } else {
+                            updatingMsg.remove();
+                            showStatus('⚠️ Download complete but playlist update failed. Please refresh the page.', 'error');
+                        }
+                    };
+                    
+                    // Start refreshing after 2 seconds
+                    setTimeout(refreshPlaylist, 2000);
+                } else {
+                    showStatus(`❌ Error: ${data.error || 'Download failed'}`, 'error');
+                }
+            } catch (error) {
+                if (error.message.includes('Failed to fetch') || error.message.includes('ERR_CONNECTION_REFUSED')) {
+                    showStatus('❌ Cannot connect to server. Please make sure you are running: python3 server.py (on port 8000)', 'error');
+                } else {
+                    showStatus(`❌ Error: ${error.message}`, 'error');
+                }
+            } finally {
+                downloadBtn.disabled = false;
+                downloadBtn.textContent = '📥 Export video to MP3';
+            }
+        });
+
+        function showStatus(message, type) {
+            downloadStatus.textContent = message;
+            downloadStatus.className = `download-status ${type}`;
+            
+            if (type === 'success') {
+                setTimeout(() => {
+                    downloadStatus.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        // Check if using wrong server
+        if (window.location.port === '5500' || window.location.hostname === '127.0.0.1' && window.location.port !== '8000') {
+            const warning = document.getElementById('serverWarning');
+            if (warning) {
+                warning.style.display = 'block';
+            }
+        }
+
+        // Load playlist on page load
+        loadPlaylist();
+
+        // Make player draggable
+        (function() {
+            const playerContainer = document.getElementById('playerContainer');
+            const dragHandle = playerContainer.querySelector('.drag-handle');
+            let isDragging = false;
+            let currentX;
+            let currentY;
+            let initialX;
+            let initialY;
+            let xOffset = 0;
+            let yOffset = 0;
+
+            // Load saved position from localStorage
+            const savedPosition = localStorage.getItem('playerPosition');
+            if (savedPosition) {
+                const pos = JSON.parse(savedPosition);
+                xOffset = pos.x;
+                yOffset = pos.y;
+                playerContainer.style.transform = `translate(${xOffset}px, ${yOffset}px)`;
+            }
+
+            dragHandle.addEventListener('mousedown', dragStart);
+            document.addEventListener('mousemove', drag);
+            document.addEventListener('mouseup', dragEnd);
+            dragHandle.addEventListener('touchstart', dragStartTouch, { passive: false });
+            document.addEventListener('touchmove', dragTouch, { passive: false });
+            document.addEventListener('touchend', dragEnd);
+
+            function dragStart(e) {
+                if (e.type === "touchstart") {
+                    initialX = e.touches[0].clientX - xOffset;
+                    initialY = e.touches[0].clientY - yOffset;
+                } else {
+                    initialX = e.clientX - xOffset;
+                    initialY = e.clientY - yOffset;
+                }
+
+                if (e.target === dragHandle || dragHandle.contains(e.target)) {
+                    isDragging = true;
+                    playerContainer.classList.add('dragging');
+                }
+            }
+
+            function dragStartTouch(e) {
+                initialX = e.touches[0].clientX - xOffset;
+                initialY = e.touches[0].clientY - yOffset;
+                if (e.target === dragHandle || dragHandle.contains(e.target)) {
+                    isDragging = true;
+                    playerContainer.classList.add('dragging');
+                    e.preventDefault();
+                }
+            }
+
+            function drag(e) {
+                if (isDragging) {
+                    e.preventDefault();
+                    
+                    if (e.type === "touchmove") {
+                        currentX = e.touches[0].clientX - initialX;
+                        currentY = e.touches[0].clientY - initialY;
+                    } else {
+                        currentX = e.clientX - initialX;
+                        currentY = e.clientY - initialY;
+                    }
+
+                    xOffset = currentX;
+                    yOffset = currentY;
+
+                    setTranslate(currentX, currentY, playerContainer);
+                }
+            }
+
+            function dragTouch(e) {
+                if (isDragging) {
+                    e.preventDefault();
+                    currentX = e.touches[0].clientX - initialX;
+                    currentY = e.touches[0].clientY - initialY;
+                    xOffset = currentX;
+                    yOffset = currentY;
+                    setTranslate(currentX, currentY, playerContainer);
+                }
+            }
+
+            function dragEnd(e) {
+                initialX = currentX;
+                initialY = currentY;
+                isDragging = false;
+                playerContainer.classList.remove('dragging');
+                
+                // Save position to localStorage
+                localStorage.setItem('playerPosition', JSON.stringify({
+                    x: xOffset,
+                    y: yOffset
+                }));
+            }
+
+            function setTranslate(xPos, yPos, el) {
+                el.style.transform = `translate(${xPos}px, ${yPos}px)`;
+            }
+
+            // Prevent dragging when clicking on interactive elements
+            const interactiveElements = playerContainer.querySelectorAll('button, input, .playlist-item, .progress-bar');
+            interactiveElements.forEach(el => {
+                el.addEventListener('mousedown', (e) => {
+                    e.stopPropagation();
+                });
+                el.addEventListener('touchstart', (e) => {
+                    e.stopPropagation();
+                }, { passive: false });
+            });
+        })();
+    </script>
+
+    <script>
+        // WebGL2 Audio Visualizer
+        class WebGL2Visualizer {
+            constructor() {
+                this.canvas = document.getElementById('visualizerCanvas');
+                if (!this.canvas) {
+                    console.error('Visualizer canvas not found!');
+                    return;
+                }
+                this.gl = null;
+                this.program = null;
+                this.analyser = null;
+                this.audioContext = null;
+                this.dataArray = null;
+                this.animationFrame = null;
+                this.fireworks = [];
+                this.time = 0;
+                this.lastTime = null;
+                this.bgColor = { r: 0.0, g: 0.0, b: 0.0 };
+                this.targetBgColor = { r: 0.0, g: 0.0, b: 0.0 };
+                this.colorTransitionSpeed = 0.05;
+                
+                // KPOP-themed color palette
+                this.kpopColors = [
+                    { r: 0.0, g: 0.0, b: 0.0 },
+                    { r: 1.0, g: 0.42, b: 0.62 },
+                    { r: 0.77, g: 0.27, b: 0.41 },
+                    { r: 0.97, g: 0.71, b: 0.0 },
+                    { r: 0.5, g: 0.0, b: 0.5 },
+                    { r: 0.93, g: 0.51, b: 0.93 },
+                    { r: 1.0, g: 0.75, b: 0.8 },
+                    { r: 0.58, g: 0.0, b: 0.83 },
+                    { r: 0.86, g: 0.44, b: 0.58 },
+                    { r: 0.99, g: 0.85, b: 0.0 },
+                ];
+                this.currentColorIndex = 0;
+                
+                console.log('WebGL2Visualizer constructor called');
+                this.init();
+            }
+
+            init() {
+                try {
+                    if (this.canvas) {
+                        this.canvas.style.display = 'block';
+                        this.canvas.style.visibility = 'visible';
+                        this.canvas.style.cursor = 'pointer';
+                        this.canvas.addEventListener('click', () => {
+                            this.changeBackgroundColor();
+                        });
+                    }
+                    
+                    // Try WebGL2 first
+                    this.gl = this.canvas.getContext('webgl2');
+                    if (!this.gl) {
+                        console.warn('WebGL2 not available, using Canvas 2D fallback');
+                        this.createFallbackVisualizer();
+                        return;
+                    }
+                    
+                    console.log('✅ WebGL2 context obtained');
+                    this.setupWebGL2();
+                } catch (error) {
+                    console.error('WebGL2 initialization failed:', error);
+                    this.createFallbackVisualizer();
+                }
+            }
+
+            setupWebGL2() {
+                const gl = this.gl;
+                
+                // Vertex shader
+                const vertexShaderSource = `#version 300 es
+                    in vec2 a_position;
+                    void main() {
+                        gl_Position = vec4(a_position, 0.0, 1.0);
+                    }
+                `;
+                
+                // Fragment shader
+                const fragmentShaderSource = `#version 300 es
+                    precision highp float;
+                    uniform float u_time;
+                    uniform vec2 u_resolution;
+                    uniform vec3 u_bgColor;
+                    uniform float u_audioData[128];
+                    uniform float u_fireworks[400]; // 100 fireworks * 4 (x, y, life, size)
+                    uniform int u_fireworkCount;
+                    out vec4 fragColor;
+                    
+                    vec3 hsv2rgb(vec3 c) {
+                        vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+                        vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+                        return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+                    }
+                    
+                    void main() {
+                        vec2 uv = gl_FragCoord.xy / u_resolution;
+                        vec3 color = vec3(0.0);
+                        
+                        // Audio frequency bars
+                        float barWidth = 1.0 / 128.0;
+                        int barIndex = int(uv.x / barWidth);
+                        if (barIndex >= 0 && barIndex < 128) {
+                            float freq = u_audioData[barIndex];
+                            float barHeight = freq * 0.5;
+                            float dist = abs(uv.y - 0.5);
+                            if (dist < barHeight) {
+                                float intensity = 1.0 - (dist / barHeight);
+                                float hue = float(barIndex) / 128.0 + u_time * 0.1;
+                                color += hsv2rgb(vec3(hue, 0.8, intensity * 0.8));
+                            }
+                        }
+                        
+                        // Fireworks
+                        for (int i = 0; i < 100; i++) {
+                            if (i >= u_fireworkCount) break;
+                            int idx = i * 4;
+                            vec2 pos = vec2(u_fireworks[idx], u_fireworks[idx + 1]);
+                            float life = u_fireworks[idx + 2];
+                            float size = u_fireworks[idx + 3];
+                            
+                            if (life > 0.0) {
+                                float dist = distance(uv, pos);
+                                if (dist < size) {
+                                    float intensity = (1.0 - dist / size) * life;
+                                    float sparkle = sin(u_time * 10.0 + float(i)) * 0.5 + 0.5;
+                                    color += vec3(1.0, 0.8, 0.2) * intensity * sparkle * 2.0;
+                                }
+                            }
+                        }
+                        
+                        // Background color
+                        color = mix(u_bgColor, color, 0.8);
+                        fragColor = vec4(color, 0.9);
+                    }
+                `;
+                
+                const vertexShader = this.createShader(gl.VERTEX_SHADER, vertexShaderSource);
+                const fragmentShader = this.createShader(gl.FRAGMENT_SHADER, fragmentShaderSource);
+                
+                if (!vertexShader || !fragmentShader) {
+                    console.error('Failed to create shaders');
+                    this.createFallbackVisualizer();
+                    return;
+                }
+                
+                this.program = this.createProgram(vertexShader, fragmentShader);
+                if (!this.program) {
+                    console.error('Failed to create program');
+                    this.createFallbackVisualizer();
+                    return;
+                }
+                
+                // Setup geometry (full-screen quad)
+                const positionBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                const positions = new Float32Array([
+                    -1, -1,
+                     1, -1,
+                    -1,  1,
+                    -1,  1,
+                     1, -1,
+                     1,  1,
+                ]);
+                gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+                this.positionBuffer = positionBuffer;
+                
+                // Get attribute and uniform locations
+                this.positionLocation = gl.getAttribLocation(this.program, 'a_position');
+                this.timeLocation = gl.getUniformLocation(this.program, 'u_time');
+                this.resolutionLocation = gl.getUniformLocation(this.program, 'u_resolution');
+                this.bgColorLocation = gl.getUniformLocation(this.program, 'u_bgColor');
+                this.audioDataLocation = gl.getUniformLocation(this.program, 'u_audioData');
+                this.fireworksLocation = gl.getUniformLocation(this.program, 'u_fireworks');
+                this.fireworkCountLocation = gl.getUniformLocation(this.program, 'u_fireworkCount');
+                
+                this.resize();
+                window.addEventListener('resize', () => this.resize());
+                
+                console.log('✅ WebGL2 setup complete');
+                this.render();
+            }
+
+            createShader(type, source) {
+                const gl = this.gl;
+                const shader = gl.createShader(type);
+                gl.shaderSource(shader, source);
+                gl.compileShader(shader);
+                
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+                    gl.deleteShader(shader);
+                    return null;
+                }
+                
+                return shader;
+            }
+
+            createProgram(vertexShader, fragmentShader) {
+                const gl = this.gl;
+                const program = gl.createProgram();
+                gl.attachShader(program, vertexShader);
+                gl.attachShader(program, fragmentShader);
+                gl.linkProgram(program);
+                
+                if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                    console.error('Program link error:', gl.getProgramInfoLog(program));
+                    gl.deleteProgram(program);
+                    return null;
+                }
+                
+                return program;
+            }
+
+            resize() {
+                const dpr = window.devicePixelRatio || 1;
+                const rect = this.canvas.getBoundingClientRect();
+                
+                if (rect.width === 0 || rect.height === 0) {
+                    const width = Math.max(300, window.innerWidth);
+                    const height = Math.max(400, window.innerHeight);
+                    this.canvas.width = Math.floor(width * dpr);
+                    this.canvas.height = Math.floor(height * dpr);
+                } else {
+                    const width = Math.max(1, Math.floor(rect.width * dpr));
+                    const height = Math.max(1, Math.floor(rect.height * dpr));
+                    this.canvas.width = width;
+                    this.canvas.height = height;
+                }
+                
+                if (this.gl) {
+                    this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+                }
+            }
+
+            changeBackgroundColor() {
+                this.currentColorIndex = (this.currentColorIndex + 1) % this.kpopColors.length;
+                this.targetBgColor = { ...this.kpopColors[this.currentColorIndex] };
+                console.log('🎨 Changing background color to:', this.targetBgColor);
+            }
+
+            updateBackgroundColorTransition() {
+                const diffR = this.targetBgColor.r - this.bgColor.r;
+                const diffG = this.targetBgColor.g - this.bgColor.g;
+                const diffB = this.targetBgColor.b - this.bgColor.b;
+                
+                if (Math.abs(diffR) > 0.001 || Math.abs(diffG) > 0.001 || Math.abs(diffB) > 0.001) {
+                    this.bgColor.r += diffR * this.colorTransitionSpeed;
+                    this.bgColor.g += diffG * this.colorTransitionSpeed;
+                    this.bgColor.b += diffB * this.colorTransitionSpeed;
+                } else {
+                    this.bgColor = { ...this.targetBgColor };
+                }
+            }
+
+            setupAudioAnalyzer() {
+                const howlContext = Howler.ctx;
+                if (!howlContext) {
+                    console.warn('Howler audio context not available');
+                    return;
+                }
+
+                this.audioContext = howlContext;
+                
+                if (!this.analyser) {
+                    this.analyser = this.audioContext.createAnalyser();
+                    this.analyser.fftSize = 512;
+                    this.analyser.smoothingTimeConstant = 0.8;
+                    const bufferLength = this.analyser.frequencyBinCount;
+                    this.dataArray = new Uint8Array(bufferLength);
+                }
+
+                try {
+                    this.analyser.disconnect();
+                } catch(e) {}
+                this.analyser.connect(this.audioContext.destination);
+                
+                const masterGain = Howler.masterGain;
+                if (masterGain) {
+                    try {
+                        masterGain.disconnect();
+                        masterGain.connect(this.analyser);
+                    } catch(e) {
+                        console.warn('Could not reconnect master gain:', e);
+                    }
+                }
+            }
+
+            updateAudioData() {
+                if (!this.analyser || !this.dataArray) return;
+                this.analyser.getByteFrequencyData(this.dataArray);
+            }
+
+            createFirework(x, y) {
+                const particleCount = 30;
+                for (let i = 0; i < particleCount; i++) {
+                    const angle = (Math.PI * 2 * i) / particleCount;
+                    const speed = 0.3 + Math.random() * 0.2;
+                    this.fireworks.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: 1.0,
+                        size: 0.02 + Math.random() * 0.03
+                    });
+                }
+            }
+
+            updateFireworks(deltaTime) {
+                for (let i = this.fireworks.length - 1; i >= 0; i--) {
+                    const fw = this.fireworks[i];
+                    fw.x += fw.vx * deltaTime;
+                    fw.y += fw.vy * deltaTime;
+                    fw.vy += 0.5 * deltaTime;
+                    fw.life -= deltaTime * 0.8;
+                    
+                    if (fw.life <= 0) {
+                        this.fireworks.splice(i, 1);
+                    }
+                }
+            }
+
+            render() {
+                if (!this.gl || !this.program) {
+                    this.animationFrame = requestAnimationFrame(() => this.render());
+                    return;
+                }
+                
+                if (this.canvas.width === 0 || this.canvas.height === 0) {
+                    this.resize();
+                    if (this.canvas.width === 0 || this.canvas.height === 0) {
+                        this.animationFrame = requestAnimationFrame(() => this.render());
+                        return;
+                    }
+                }
+
+                const gl = this.gl;
+                const now = performance.now() / 1000;
+                const deltaTime = this.lastTime ? now - this.lastTime : 0.016;
+                this.lastTime = now;
+                this.time += deltaTime;
+
+                this.updateAudioData();
+                this.updateFireworks(deltaTime);
+                this.updateBackgroundColorTransition();
+
+                // Clear
+                gl.clearColor(this.bgColor.r, this.bgColor.g, this.bgColor.b, 1.0);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+
+                // Use program
+                gl.useProgram(this.program);
+
+                // Setup attributes
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+                gl.enableVertexAttribArray(this.positionLocation);
+                gl.vertexAttribPointer(this.positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+                // Set uniforms
+                gl.uniform1f(this.timeLocation, this.time);
+                gl.uniform2f(this.resolutionLocation, this.canvas.width, this.canvas.height);
+                gl.uniform3f(this.bgColorLocation, this.bgColor.r, this.bgColor.g, this.bgColor.b);
+                
+                // Audio data
+                if (this.dataArray) {
+                    const audioFloats = new Float32Array(128);
+                    for (let i = 0; i < 128; i++) {
+                        audioFloats[i] = Math.pow(this.dataArray[i] / 255.0, 0.5);
+                    }
+                    gl.uniform1fv(this.audioDataLocation, audioFloats);
+                }
+                
+                // Fireworks
+                const fireworkData = new Float32Array(400);
+                const count = Math.min(this.fireworks.length, 100);
+                for (let i = 0; i < count; i++) {
+                    const fw = this.fireworks[i];
+                    fireworkData[i * 4] = fw.x;
+                    fireworkData[i * 4 + 1] = fw.y;
+                    fireworkData[i * 4 + 2] = fw.life;
+                    fireworkData[i * 4 + 3] = fw.size;
+                }
+                gl.uniform1fv(this.fireworksLocation, fireworkData);
+                gl.uniform1i(this.fireworkCountLocation, count);
+
+                // Draw
+                gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+                this.animationFrame = requestAnimationFrame(() => this.render());
+            }
+
+            createFallbackVisualizer() {
+                console.log('🎨 Creating Canvas 2D fallback visualizer');
+                
+                if (this.canvas) {
+                    this.canvas.style.display = 'block';
+                    this.canvas.style.visibility = 'visible';
+                    this.canvas.style.opacity = '1';
+                    this.canvas.style.cursor = 'pointer';
+                    this.canvas.addEventListener('click', () => {
+                        this.changeBackgroundColor();
+                    });
+                }
+                
+                const ctx = this.canvas.getContext('2d');
+                if (!ctx) return;
+                
+                this.setupAudioAnalyzer();
+                this.resize();
+                
+                requestAnimationFrame(() => {
+                    this.resize();
+                    if (this.canvas.width === 0 || this.canvas.height === 0) {
+                        const dpr = window.devicePixelRatio || 1;
+                        this.canvas.width = Math.max(300, window.innerWidth) * dpr;
+                        this.canvas.height = Math.max(400, window.innerHeight) * dpr;
+                    }
+                    this.fallbackCtx = ctx;
+                    this.fallbackRender();
+                });
+            }
+
+            fallbackRender() {
+                if (!this.fallbackCtx) {
+                    requestAnimationFrame(() => this.fallbackRender());
+                    return;
+                }
+                
+                const ctx = this.fallbackCtx;
+                
+                if (this.canvas.width === 0 || this.canvas.height === 0) {
+                    this.resize();
+                    if (this.canvas.width === 0 || this.canvas.height === 0) {
+                        requestAnimationFrame(() => this.fallbackRender());
+                        return;
+                    }
+                }
+                
+                const width = this.canvas.width;
+                const height = this.canvas.height;
+                
+                this.updateBackgroundColorTransition();
+                
+                const bg = this.bgColor;
+                ctx.fillStyle = `rgba(${Math.floor(bg.r * 255)}, ${Math.floor(bg.g * 255)}, ${Math.floor(bg.b * 255)}, 1.0)`;
+                ctx.fillRect(0, 0, width, height);
+                
+                if (this.dataArray && this.analyser) {
+                    try {
+                        this.analyser.getByteFrequencyData(this.dataArray);
+                        const barWidth = width / 128;
+                        
+                        for (let i = 0; i < 128; i++) {
+                            const value = this.dataArray[i] / 255;
+                            const barHeight = Math.pow(value, 0.5) * height * 0.4;
+                            const hue = (i / 128) * 360 + (this.time || 0) * 50;
+                            ctx.fillStyle = `hsl(${hue % 360}, 80%, ${50 + value * 30}%)`;
+                            ctx.fillRect(i * barWidth, height / 2 - barHeight / 2, barWidth - 1, barHeight);
+                        }
+                    } catch (e) {}
+                }
+                
+                for (const fw of this.fireworks) {
+                    if (fw.life > 0) {
+                        const x = fw.x * width;
+                        const y = fw.y * height;
+                        const size = fw.size * Math.min(width, height);
+                        ctx.globalAlpha = fw.life;
+                        
+                        const gradient = ctx.createRadialGradient(x, y, 0, x, y, size);
+                        gradient.addColorStop(0, `rgba(255, ${200 * fw.life}, ${50 * fw.life}, ${fw.life})`);
+                        gradient.addColorStop(0.5, `rgba(255, ${150 * fw.life}, ${100 * fw.life}, ${fw.life * 0.5})`);
+                        gradient.addColorStop(1, 'rgba(255, 200, 50, 0)');
+                        ctx.fillStyle = gradient;
+                        ctx.beginPath();
+                        ctx.arc(x, y, size, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+                ctx.globalAlpha = 1.0;
+                
+                const now = performance.now() / 1000;
+                const deltaTime = this.lastTime ? now - this.lastTime : 0.016;
+                this.lastTime = now;
+                this.time = (this.time || 0) + deltaTime;
+                this.updateFireworks(deltaTime);
+                
+                requestAnimationFrame(() => this.fallbackRender());
+            }
+
+            triggerFireworks() {
+                for (let i = 0; i < 3; i++) {
+                    const x = 0.3 + Math.random() * 0.4;
+                    const y = 0.2 + Math.random() * 0.3;
+                    this.createFirework(x, y);
+                }
+            }
+        }
+
+        // Initialize visualizer
+        window.visualizer = null;
+        window.addEventListener('load', () => {
+            console.log('Initializing WebGL2 visualizer...');
+            const canvas = document.getElementById('visualizerCanvas');
+            if (!canvas) {
+                console.error('Canvas element not found!');
+                return;
+            }
+            
+            canvas.style.display = 'block';
+            canvas.style.visibility = 'visible';
+            canvas.style.opacity = '1';
+            
+            try {
+                window.visualizer = new WebGL2Visualizer();
+            } catch (error) {
+                console.error('Failed to create visualizer:', error);
+            }
+            
+            setTimeout(() => {
+                if (window.visualizer) {
+                    console.log('Setting up audio analyzer...');
+                    try {
+                        window.visualizer.setupAudioAnalyzer();
+                    } catch (error) {
+                        console.warn('Could not setup audio analyzer:', error);
+                    }
+                }
+            }, 1000);
+        });
+    </script>
+</body>
+</html>
