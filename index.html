@@ -167,7 +167,7 @@
             // Load durations for all tracks using Howler
             playlist.forEach((track, index) => {
                 const tempSound = new Howl({
-                    src: [track.src],
+                    src: [track.file],
                     html5: false, // Use Web Audio API
                     preload: true,
                     onload: function() {
@@ -223,8 +223,8 @@
             
             // Create new Howler sound instance with better streaming options
             sound = new Howl({
-                src: [track.src],
-                html5: false, // Use Web Audio API for visualizer compatibility
+                src: [track.file],
+                html5: true, // Use HTML5 Audio for better streaming from GitHub
                 preload: true, // Preload for better performance
                 autoplay: false,
                 volume: volumeSlider.value / 100,
