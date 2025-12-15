@@ -126,10 +126,12 @@ Deploy your audio player to the web with Vercel:
 
 ### Important Notes for Vercel Deployment
 
-- The MP3 download functionality (`download_mp3.py`) won't work on Vercel (it's a static hosting platform)
-- You'll need to download and add MP3 files locally, then push them to your repository
-- The audio player itself works perfectly on Vercel!
-- Free tier includes: 100GB bandwidth, automatic HTTPS, custom domains
+- **Vercel = Static hosting only** - The player works great, but download feature doesn't
+- **To add new songs:**
+  1. Download locally: `python3 download_mp3.py "URL"`
+  2. Update playlist: `python3 generate_playlist.py`
+  3. Push to GitHub: `git push` (auto-deploys to Vercel)
+- **Simple & Free:** 100GB bandwidth, automatic HTTPS, custom domains
 
 ## Notes
 

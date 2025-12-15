@@ -38,3 +38,7 @@ wheels/
 .env
 .env.local
 
+# Audio files (hosted on GitHub Releases)
+# Uncomment the line below AFTER uploading to GitHub Releases
+# audio/
+
