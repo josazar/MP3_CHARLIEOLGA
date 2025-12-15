@@ -466,9 +466,13 @@
             showStatus('Downloading and converting to MP3... This may take a moment.', 'processing');
 
             try {
-                // Detect the correct server port
+                // Detect environment and use appropriate endpoint
+                const isProduction = window.location.hostname.includes('vercel.app') || 
+                                    window.location.hostname.includes('vercel.com');
                 const baseUrl = window.location.origin;
-                const response = await fetch(`${baseUrl}/download`, {
+                const endpoint = isProduction ? `${baseUrl}/api/download` : `${baseUrl}/download`;
+                
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -486,48 +490,61 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    showStatus(`✅ Successfully downloaded: ${data.title}`, 'success');
-                    youtubeUrlInput.value = '';
-                    
-                    // Show updating message
-                    const updatingMsg = document.createElement('div');
-                    updatingMsg.className = 'download-status processing';
-                    updatingMsg.textContent = '🔄 Updating playlist...';
-                    updatingMsg.style.marginTop = '10px';
-                    downloadStatus.parentNode.insertBefore(updatingMsg, downloadStatus.nextSibling);
-                    
-                    // Reload playlist after a delay to ensure server has regenerated it
-                    // Try multiple times in case the server needs more time
-                    let attempts = 0;
-                    const maxAttempts = 5;
-                    
-                    const refreshPlaylist = async () => {
-                        attempts++;
-                        await loadPlaylist(true); // Keep current track if possible
+                    if (data.success) {
+                        showStatus(`✅ Successfully downloaded: ${data.title}`, 'success');
+                        youtubeUrlInput.value = '';
                         
-                        // Check if new track was added
-                        if (playlist.length > 0) {
-                            updatingMsg.remove();
-                            showStatus(`✅ Playlist updated! ${playlist.length} track(s) available.`, 'success');
+                        // Show updating message
+                        const updatingMsg = document.createElement('div');
+                        updatingMsg.className = 'download-status processing';
+                        updatingMsg.textContent = '🔄 Updating playlist...';
+                        updatingMsg.style.marginTop = '10px';
+                        downloadStatus.parentNode.insertBefore(updatingMsg, downloadStatus.nextSibling);
+                        
+                        // Reload playlist after a delay to ensure server has regenerated it
+                        // Try multiple times in case the server needs more time
+                        let attempts = 0;
+                        const maxAttempts = 5;
+                        
+                        const refreshPlaylist = async () => {
+                            attempts++;
+                            await loadPlaylist(true); // Keep current track if possible
                             
-                            // Scroll to bottom to show new track
-                            const playlistItems = playlistEl.querySelectorAll('.playlist-item');
-                            if (playlistItems.length > 0) {
-                                playlistItems[playlistItems.length - 1].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            // Check if new track was added
+                            if (playlist.length > 0) {
+                                updatingMsg.remove();
+                                showStatus(`✅ Playlist updated! ${playlist.length} track(s) available.`, 'success');
+                                
+                                // Scroll to bottom to show new track
+                                const playlistItems = playlistEl.querySelectorAll('.playlist-item');
+                                if (playlistItems.length > 0) {
+                                    playlistItems[playlistItems.length - 1].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                }
+                            } else if (attempts < maxAttempts) {
+                                // Retry after a short delay
+                                setTimeout(refreshPlaylist, 1000);
+                            } else {
+                                updatingMsg.remove();
+                                showStatus('⚠️ Download complete but playlist update failed. Please refresh the page.', 'error');
                             }
-                        } else if (attempts < maxAttempts) {
-                            // Retry after a short delay
-                            setTimeout(refreshPlaylist, 1000);
+                        };
+                        
+                        // Start refreshing after 2 seconds
+                        setTimeout(refreshPlaylist, 2000);
+                    } else {
+                        // Handle cases like production environment where download isn't available
+                        if (data.instructions) {
+                            let message = `ℹ️ ${data.message}\n\nSteps:\n`;
+                            data.instructions.forEach(instruction => {
+                                message += `${instruction}\n`;
+                            });
+                            showStatus(message.replace(/\n/g, '<br>'), 'info');
                         } else {
-                            updatingMsg.remove();
-                            showStatus('⚠️ Download complete but playlist update failed. Please refresh the page.', 'error');
+                            showStatus(`ℹ️ ${data.message}`, 'info');
                         }
-                    };
-                    
-                    // Start refreshing after 2 seconds
-                    setTimeout(refreshPlaylist, 2000);
+                    }
                 } else {
-                    showStatus(`❌ Error: ${data.error || 'Download failed'}`, 'error');
+                    showStatus(`❌ Error: ${data.error || data.message || 'Download failed'}`, 'error');
                 }
             } catch (error) {
                 if (error.message.includes('Failed to fetch') || error.message.includes('ERR_CONNECTION_REFUSED')) {
@@ -542,8 +559,9 @@
         });
 
         function showStatus(message, type) {
-            downloadStatus.textContent = message;
+            downloadStatus.innerHTML = message; // Use innerHTML to support <br> tags
             downloadStatus.className = `download-status ${type}`;
+            downloadStatus.style.display = 'block';
             
             if (type === 'success') {
                 setTimeout(() => {
