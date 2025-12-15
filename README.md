@@ -91,47 +91,30 @@ MP3_CHARLIEOLGA/
 
 Deploy your audio player to the web with Vercel:
 
-### Option 1: Deploy via Vercel Dashboard (Easiest)
+1. **Push your code to GitHub**
+2. **Visit [Vercel](https://vercel.com)** and sign in
+3. **Import your repository**
+4. **Deploy!** 
 
-1. **Push your code to GitHub** (if not already done)
-   ```bash
-   git add .
-   git commit -m "Add Vercel configuration"
-   git push
-   ```
+Your player will be live at `https://your-project.vercel.app`
 
-2. **Visit [Vercel](https://vercel.com)**
-   - Sign in with your GitHub account
-   - Click "Add New Project"
-   - Import your `MP3_CHARLIEOLGA` repository
-   - Vercel will auto-detect the configuration
-   - Click "Deploy"
+### Adding New Songs
 
-3. **Done!** Your player will be live at `https://your-project.vercel.app`
+MP3 files are hosted on GitHub Releases for better performance:
 
-### Option 2: Deploy via Vercel CLI
+```bash
+# 1. Download a song
+python3 download_mp3.py "YOUTUBE_URL"
 
-1. **Install Vercel CLI:**
-   ```bash
-   npm i -g vercel
-   ```
+# 2. Upload to GitHub Releases
+python3 upload_to_github_releases.py
+./upload_release.sh
 
-2. **Deploy:**
-   ```bash
-   cd MP3_CHARLIEOLGA
-   vercel
-   ```
+# 3. Push changes
+git push
+```
 
-3. **Follow the prompts** and your site will be deployed!
-
-### Important Notes for Vercel Deployment
-
-- **Vercel = Static hosting only** - The player works great, but download feature doesn't
-- **To add new songs:**
-  1. Download locally: `python3 download_mp3.py "URL"`
-  2. Update playlist: `python3 generate_playlist.py`
-  3. Push to GitHub: `git push` (auto-deploys to Vercel)
-- **Simple & Free:** 100GB bandwidth, automatic HTTPS, custom domains
+Vercel auto-deploys on every push!
 
 ## Notes
 
