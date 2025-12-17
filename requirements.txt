@@ -1,3 +1,5 @@
 # Minimal dependencies for Vercel
 # Note: yt-dlp is too large for Vercel, use local scripts instead
 
+certifi>=2023.0.0
+

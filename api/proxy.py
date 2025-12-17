@@ -6,6 +6,18 @@ from http.server import BaseHTTPRequestHandler
 import urllib.request
 import urllib.parse
 import json
+import ssl
+
+# Try to use certifi for SSL certificates, fallback to unverified context if not available
+try:
+    import certifi
+    import ssl
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    # If certifi is not available, create an unverified context (less secure but works)
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
 
 class handler(BaseHTTPRequestHandler):
     
@@ -51,8 +63,8 @@ class handler(BaseHTTPRequestHandler):
             
             # Fetch the file
             try:
-                # Set a timeout
-                response = urllib.request.urlopen(req, timeout=30)
+                # Set a timeout and use SSL context
+                response = urllib.request.urlopen(req, timeout=30, context=ssl_context)
                 
                 # Get status code
                 status_code = response.getcode()

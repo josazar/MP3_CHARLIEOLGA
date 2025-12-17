@@ -19,7 +19,7 @@
         <div class="download-section" id="downloadSection">
             <div id="serverWarning" style="display: none;">
                 <strong>⚠️ Wrong Server Detected!</strong><br>
-                You're using port 5500 (Live Server). The download feature requires the Python server.<br>
+                You're using port 5500/5501 (Live Server). Audio playback and downloads require the Python server.<br>
                 <strong>Please run:</strong> <code>python3 server.py</code> and access <code>http://localhost:8000</code>
             </div>
             <div id="productionInfo" style="display: none;">
@@ -98,18 +98,16 @@
         let soundId = null; // Howler.js sound ID for seeking
         let progressInterval = null;
 
-        // Helper function to proxy GitHub URLs in production (for CORS)
+        // Helper function to proxy GitHub URLs (for CORS - needed in all environments)
         function getAudioUrl(url) {
-            const isProduction = window.location.hostname.includes('vercel.app') || 
-                                window.location.hostname.includes('vercel.com');
-            
-            // If in production and URL is from GitHub releases, use proxy
-            if (isProduction && url && url.includes('github.com') && url.includes('/releases/download/')) {
+            // Always proxy GitHub release URLs to avoid CORS issues
+            // GitHub doesn't allow direct access from browsers due to CORS policy
+            if (url && url.includes('github.com') && url.includes('/releases/download/')) {
                 const baseUrl = window.location.origin;
                 return `${baseUrl}/api/proxy?url=${encodeURIComponent(url)}`;
             }
             
-            // Otherwise, use the URL as-is
+            // For local files or other URLs, use as-is
             return url;
         }
 
@@ -181,6 +179,7 @@
             playlist.forEach((track, index) => {
                 const tempSound = new Howl({
                     src: [getAudioUrl(track.file)],
+                    format: ['mp3'], // Explicitly specify format for proxy URLs
                     html5: false, // Use Web Audio API
                     preload: true,
                     onload: function() {
@@ -210,11 +209,18 @@
             
             // Stop and unload current sound
             if (sound) {
-                sound.stop();
-                sound.unload();
+                try {
+                    sound.stop();
+                    sound.unload();
+                } catch (e) {
+                    console.warn('Error stopping previous sound:', e);
+                }
                 sound = null;
                 soundId = null;
             }
+            
+            // Reset playing state
+            isPlaying = false;
             
             // Clear progress interval
             if (progressInterval) {
@@ -244,6 +250,7 @@
             
             sound = new Howl({
                 src: [audioUrl],
+                format: ['mp3'], // Explicitly specify format for proxy URLs
                 html5: useHtml5, // Use HTML5 for proxied URLs (streaming), Web Audio for direct
                 preload: usePreload, // Only preload direct files
                 autoplay: false,
@@ -267,7 +274,9 @@
                         console.log('Setting up audio analyzer on load...');
                         window.visualizer.setupAudioAnalyzer();
                     }
-                    if (autoPlay) {
+                    // Auto-play if requested (for preloaded tracks)
+                    if (autoPlay && usePreload) {
+                        console.log('Auto-playing preloaded track:', track.title);
                         playTrack();
                     }
                 },
@@ -297,11 +306,22 @@
                                 console.log('Proxy response:', res.status, res.statusText);
                                 if (res.ok) {
                                     console.log('✅ Proxy is accessible, but Howler failed to load');
+                                } else if (res.status === 404) {
+                                    console.error('❌ Proxy endpoint not found. Are you using the Python server?');
+                                    console.error('💡 Please run: python3 server.py and access http://localhost:8000');
+                                    currentInfo.textContent = 'Error: Proxy not available. Use Python server (python3 server.py) on port 8000';
                                 } else {
                                     console.error('❌ Proxy returned error:', res.status);
                                 }
                             })
-                            .catch(err => console.error('❌ Proxy test failed:', err));
+                            .catch(err => {
+                                console.error('❌ Proxy test failed:', err);
+                                if (window.location.port === '5500' || window.location.port === '5501') {
+                                    console.error('💡 You are using Live Server. Please use the Python server instead:');
+                                    console.error('   python3 server.py (then access http://localhost:8000)');
+                                    currentInfo.textContent = 'Error: Use Python server (python3 server.py) on port 8000, not Live Server';
+                                }
+                            });
                     }
                 },
                 onplay: function(id) {
@@ -354,6 +374,20 @@
                 isPlaying = false;
                 playPauseBtn.textContent = '▶';
                 playPauseBtn.title = 'Play';
+            } else {
+                // If autoPlay is true, try to play immediately
+                // For HTML5 audio with preload: false, play() will trigger loading
+                // For Web Audio with preload: true, onload will call playTrack()
+                if (useHtml5 || !usePreload) {
+                    // HTML5 audio or non-preloaded audio can start loading when play() is called
+                    setTimeout(() => {
+                        if (sound) {
+                            console.log('Attempting to auto-play track:', track.title);
+                            playTrack();
+                        }
+                    }, 100);
+                }
+                // If preload is true, onload callback will handle playing
             }
         }
         
@@ -378,11 +412,42 @@
             if (Howler.ctx && Howler.ctx.state === 'suspended') {
                 Howler.ctx.resume().then(() => {
                     console.log('✅ Audio context resumed');
+                    // Try playing again after context is resumed
+                    if (sound) {
+                        soundId = sound.play();
+                    }
                 });
+                return;
             }
             
             // Play and store the sound ID
-            soundId = sound.play();
+            // Howler will automatically load the file if preload: false
+            try {
+                soundId = sound.play();
+                if (!soundId) {
+                    console.warn('Play returned no sound ID, retrying...');
+                    // Retry after a short delay - Howler might need time to load
+                    setTimeout(() => {
+                        if (sound && !isPlaying) {
+                            soundId = sound.play();
+                        }
+                    }, 300);
+                } else {
+                    console.log('✅ Play command sent, sound ID:', soundId);
+                }
+            } catch (error) {
+                console.error('Error playing sound:', error);
+                // Retry after a delay
+                setTimeout(() => {
+                    if (sound && !isPlaying) {
+                        try {
+                            soundId = sound.play();
+                        } catch (e) {
+                            console.error('Retry play failed:', e);
+                        }
+                    }
+                }, 500);
+            }
             // onplay event will update UI
         }
 
@@ -673,9 +738,33 @@
                 if (serverWarning) serverWarning.style.display = 'block';
                 if (productionInfo) productionInfo.style.display = 'none';
             } else {
-                // Correct local environment
+                // Correct local environment - but check if proxy is available
                 if (serverWarning) serverWarning.style.display = 'none';
                 if (productionInfo) productionInfo.style.display = 'none';
+                
+                // Test proxy availability
+                testProxyAvailability();
+            }
+        }
+        
+        // Test if proxy endpoint is available
+        async function testProxyAvailability() {
+            const testUrl = `${window.location.origin}/api/proxy?url=${encodeURIComponent('https://github.com/josazar/MP3_CHARLIEOLGA/releases/download/audio-files-v1.0/test.mp3')}`;
+            try {
+                const response = await fetch(testUrl, { method: 'HEAD' });
+                if (response.status === 404) {
+                    console.warn('⚠️ Proxy endpoint not found. Make sure you are using the Python server.');
+                    const serverWarning = document.getElementById('serverWarning');
+                    if (serverWarning) {
+                        serverWarning.innerHTML = '<strong>⚠️ Proxy Not Available!</strong><br>You need to use the Python server for audio playback.<br><strong>Please run:</strong> <code>python3 server.py</code> and access <code>http://localhost:8000</code>';
+                        serverWarning.style.display = 'block';
+                    }
+                } else if (response.status === 400) {
+                    // 400 is expected for invalid URL - means proxy is working!
+                    console.log('✅ Proxy endpoint is available');
+                }
+            } catch (error) {
+                console.warn('⚠️ Could not test proxy:', error);
             }
         }
         
