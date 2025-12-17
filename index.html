@@ -235,19 +235,35 @@
             renderPlaylist();
             
             // Create new Howler sound instance with better streaming options
+            const audioUrl = getAudioUrl(track.file);
+            console.log('Loading track:', track.title, 'from URL:', audioUrl);
+            
+            // Use HTML5 for proxied URLs (better for streaming), Web Audio for direct files
+            const useHtml5 = audioUrl.includes('/api/proxy');
+            const usePreload = !useHtml5; // Don't preload proxied URLs to avoid timeouts
+            
             sound = new Howl({
-                src: [getAudioUrl(track.file)],
-                html5: false, // Use Web Audio API for visualizer support
-                preload: true, // Preload for better performance
+                src: [audioUrl],
+                html5: useHtml5, // Use HTML5 for proxied URLs (streaming), Web Audio for direct
+                preload: usePreload, // Only preload direct files
                 autoplay: false,
                 volume: volumeSlider.value / 100,
+                xhr: {
+                    method: 'GET',
+                    headers: {},
+                    withCredentials: false
+                },
                 onload: function() {
+                    console.log('✅ Track loaded successfully:', track.title, 'Duration:', this.duration());
                     // Update duration when loaded
                     if (this.duration()) {
                         durationEl.textContent = formatTime(this.duration());
+                    } else {
+                        // For HTML5 audio, duration might not be available immediately
+                        console.log('Duration not available yet, will update when ready');
                     }
-                    // Connect visualizer analyser if available
-                    if (window.visualizer) {
+                    // Connect visualizer analyser if available (only works with Web Audio)
+                    if (window.visualizer && !useHtml5) {
                         console.log('Setting up audio analyzer on load...');
                         window.visualizer.setupAudioAnalyzer();
                     }
@@ -255,15 +271,49 @@
                         playTrack();
                     }
                 },
+                onloaderror: function(id, error) {
+                    console.error('❌ Howler load error:', error, 'Error code:', error, 'for URL:', audioUrl);
+                    let errorMsg = 'Unknown error';
+                    if (error === 1) {
+                        errorMsg = 'Network error - check if file exists or proxy is working';
+                    } else if (error === 2) {
+                        errorMsg = 'Decoding error - file may be corrupted';
+                    } else if (error === 3) {
+                        errorMsg = 'Format not supported';
+                    } else if (error === 4) {
+                        errorMsg = 'File format not supported';
+                    }
+                    currentInfo.textContent = `Error: ${errorMsg}`;
+                    currentInfo.style.color = '#d32f2f';
+                    isPlaying = false;
+                    playPauseBtn.textContent = '▶';
+                    playPauseBtn.title = 'Play';
+                    
+                    // Try to test the proxy URL directly
+                    if (audioUrl.includes('/api/proxy')) {
+                        console.log('Testing proxy URL accessibility...');
+                        fetch(audioUrl, { method: 'HEAD' })
+                            .then(res => {
+                                console.log('Proxy response:', res.status, res.statusText);
+                                if (res.ok) {
+                                    console.log('✅ Proxy is accessible, but Howler failed to load');
+                                } else {
+                                    console.error('❌ Proxy returned error:', res.status);
+                                }
+                            })
+                            .catch(err => console.error('❌ Proxy test failed:', err));
+                    }
+                },
                 onplay: function(id) {
+                    console.log('▶️ Track started playing:', track.title);
                     soundId = id; // Store the sound ID for seeking
                     isPlaying = true;
                     playPauseBtn.textContent = '⏸';
                     playPauseBtn.title = 'Pause';
                     // Start progress updates
                     startProgressUpdates();
-                    // Ensure audio analyzer is connected when playing
-                    if (window.visualizer) {
+                    // Ensure audio analyzer is connected when playing (only works with Web Audio)
+                    if (window.visualizer && !useHtml5) {
                         console.log('Ensuring audio analyzer is connected on play...');
                         window.visualizer.setupAudioAnalyzer();
                     }
@@ -281,8 +331,8 @@
                     nextTrack();
                 },
                 onerror: function(id, error) {
-                    console.error('Howler error:', error);
-                    let errorMsg = 'Unknown error';
+                    console.error('Howler playback error:', error, 'for URL:', audioUrl);
+                    let errorMsg = 'Playback error';
                     if (error === 1) {
                         errorMsg = 'Network error - check if file exists';
                     } else if (error === 2) {

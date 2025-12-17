@@ -51,41 +51,53 @@ class handler(BaseHTTPRequestHandler):
             
             # Fetch the file
             try:
-                with urllib.request.urlopen(req) as response:
-                    # Get status code
-                    status_code = response.getcode()
-                    
-                    # Get headers from GitHub response
-                    content_type = response.headers.get('Content-Type', 'audio/mpeg')
-                    content_length = response.headers.get('Content-Length')
-                    content_range = response.headers.get('Content-Range')
-                    accept_ranges = response.headers.get('Accept-Ranges', 'bytes')
-                    
-                    # Send response headers
-                    if status_code == 206:  # Partial content
-                        self.send_response(206)
+                # Set a timeout
+                response = urllib.request.urlopen(req, timeout=30)
+                
+                # Get status code
+                status_code = response.getcode()
+                
+                # Get headers from GitHub response
+                content_type = response.headers.get('Content-Type', 'audio/mpeg')
+                if not content_type or content_type == 'application/octet-stream':
+                    # Try to determine from URL
+                    if url.endswith('.mp3'):
+                        content_type = 'audio/mpeg'
                     else:
-                        self.send_response(200)
-                    
-                    self.send_header('Content-Type', content_type)
-                    self.send_cors_headers()
-                    
-                    if content_length:
-                        self.send_header('Content-Length', content_length)
-                    if content_range:
-                        self.send_header('Content-Range', content_range)
-                    self.send_header('Accept-Ranges', accept_ranges)
-                    self.send_header('Cache-Control', 'public, max-age=31536000')
-                    
-                    self.end_headers()
-                    
-                    # Stream the file
-                    chunk_size = 8192
+                        content_type = 'audio/mpeg'  # Default to MP3
+                
+                content_length = response.headers.get('Content-Length')
+                content_range = response.headers.get('Content-Range')
+                accept_ranges = response.headers.get('Accept-Ranges', 'bytes')
+                
+                # Send response headers
+                if status_code == 206:  # Partial content
+                    self.send_response(206)
+                else:
+                    self.send_response(200)
+                
+                self.send_header('Content-Type', content_type)
+                self.send_cors_headers()
+                
+                if content_length:
+                    self.send_header('Content-Length', content_length)
+                if content_range:
+                    self.send_header('Content-Range', content_range)
+                self.send_header('Accept-Ranges', accept_ranges)
+                self.send_header('Cache-Control', 'public, max-age=31536000')
+                
+                self.end_headers()
+                
+                # Stream the file in chunks
+                chunk_size = 8192
+                try:
                     while True:
                         chunk = response.read(chunk_size)
                         if not chunk:
                             break
                         self.wfile.write(chunk)
+                finally:
+                    response.close()
                         
             except urllib.error.HTTPError as e:
                 self.send_error_response(e.code, f'Error fetching file: {e.reason}')
