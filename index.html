@@ -752,6 +752,7 @@
             const testUrl = `${window.location.origin}/api/proxy?url=${encodeURIComponent('https://github.com/josazar/MP3_CHARLIEOLGA/releases/download/audio-files-v1.0/test.mp3')}`;
             try {
                 const response = await fetch(testUrl, { method: 'HEAD' });
+                console.log('Proxy test response:', response.status, response.statusText);
                 if (response.status === 404) {
                     console.warn('⚠️ Proxy endpoint not found. Make sure you are using the Python server.');
                     const serverWarning = document.getElementById('serverWarning');
@@ -759,12 +760,19 @@
                         serverWarning.innerHTML = '<strong>⚠️ Proxy Not Available!</strong><br>You need to use the Python server for audio playback.<br><strong>Please run:</strong> <code>python3 server.py</code> and access <code>http://localhost:8000</code>';
                         serverWarning.style.display = 'block';
                     }
-                } else if (response.status === 400) {
-                    // 400 is expected for invalid URL - means proxy is working!
-                    console.log('✅ Proxy endpoint is available');
+                } else if (response.status === 200 || response.status === 400) {
+                    // 200 or 400 means proxy endpoint exists and is working!
+                    console.log('✅ Proxy endpoint is available (status:', response.status, ')');
+                } else {
+                    console.log('Proxy endpoint responded with status:', response.status);
                 }
             } catch (error) {
-                console.warn('⚠️ Could not test proxy:', error);
+                console.error('⚠️ Could not test proxy:', error);
+                const serverWarning = document.getElementById('serverWarning');
+                if (serverWarning) {
+                    serverWarning.innerHTML = '<strong>⚠️ Proxy Not Available!</strong><br>Could not connect to proxy endpoint. Make sure the Python server is running.<br><strong>Please run:</strong> <code>python3 server.py</code> and access <code>http://localhost:8000</code>';
+                    serverWarning.style.display = 'block';
+                }
             }
         }
         
