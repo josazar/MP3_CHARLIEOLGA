@@ -222,7 +222,7 @@
             // Create new Howler sound instance with better streaming options
             sound = new Howl({
                 src: [track.file],
-                html5: true, // Use HTML5 Audio for better streaming from GitHub
+                html5: false, // Use Web Audio API for visualizer support
                 preload: true, // Preload for better performance
                 autoplay: false,
                 volume: volumeSlider.value / 100,
@@ -232,7 +232,8 @@
                         durationEl.textContent = formatTime(this.duration());
                     }
                     // Connect visualizer analyser if available
-                    if (window.visualizer && window.visualizer.analyser) {
+                    if (window.visualizer) {
+                        console.log('Setting up audio analyzer on load...');
                         window.visualizer.setupAudioAnalyzer();
                     }
                     if (autoPlay) {
@@ -246,6 +247,11 @@
                     playPauseBtn.title = 'Pause';
                     // Start progress updates
                     startProgressUpdates();
+                    // Ensure audio analyzer is connected when playing
+                    if (window.visualizer) {
+                        console.log('Ensuring audio analyzer is connected on play...');
+                        window.visualizer.setupAudioAnalyzer();
+                    }
                 },
                 onpause: function() {
                     isPlaying = false;
@@ -301,6 +307,13 @@
             if (!sound) {
                 console.log('No audio source loaded');
                 return;
+            }
+            
+            // Resume audio context if suspended (required by browser autoplay policies)
+            if (Howler.ctx && Howler.ctx.state === 'suspended') {
+                Howler.ctx.resume().then(() => {
+                    console.log('✅ Audio context resumed');
+                });
             }
             
             // Play and store the sound ID
@@ -625,7 +638,7 @@
                 const pos = JSON.parse(savedPosition);
                 xOffset = pos.x;
                 yOffset = pos.y;
-                playerContainer.style.transform = `translate(${xOffset}px, ${yOffset}px)`;
+                playerContainer.style.transform = `translate(-50%, -50%) translate(${xOffset}px, ${yOffset}px)`;
             }
 
             dragHandle.addEventListener('mousedown', dragStart);
@@ -636,12 +649,15 @@
             document.addEventListener('touchend', dragEnd);
 
             function dragStart(e) {
+                const centerX = window.innerWidth / 2;
+                const centerY = window.innerHeight / 2;
+                
                 if (e.type === "touchstart") {
-                    initialX = e.touches[0].clientX - xOffset;
-                    initialY = e.touches[0].clientY - yOffset;
+                    initialX = e.touches[0].clientX - centerX - xOffset;
+                    initialY = e.touches[0].clientY - centerY - yOffset;
                 } else {
-                    initialX = e.clientX - xOffset;
-                    initialY = e.clientY - yOffset;
+                    initialX = e.clientX - centerX - xOffset;
+                    initialY = e.clientY - centerY - yOffset;
                 }
 
                 if (e.target === dragHandle || dragHandle.contains(e.target)) {
@@ -651,8 +667,10 @@
             }
 
             function dragStartTouch(e) {
-                initialX = e.touches[0].clientX - xOffset;
-                initialY = e.touches[0].clientY - yOffset;
+                const centerX = window.innerWidth / 2;
+                const centerY = window.innerHeight / 2;
+                initialX = e.touches[0].clientX - centerX - xOffset;
+                initialY = e.touches[0].clientY - centerY - yOffset;
                 if (e.target === dragHandle || dragHandle.contains(e.target)) {
                     isDragging = true;
                     playerContainer.classList.add('dragging');
@@ -664,12 +682,15 @@
                 if (isDragging) {
                     e.preventDefault();
                     
+                    const centerX = window.innerWidth / 2;
+                    const centerY = window.innerHeight / 2;
+                    
                     if (e.type === "touchmove") {
-                        currentX = e.touches[0].clientX - initialX;
-                        currentY = e.touches[0].clientY - initialY;
+                        currentX = e.touches[0].clientX - centerX - initialX;
+                        currentY = e.touches[0].clientY - centerY - initialY;
                     } else {
-                        currentX = e.clientX - initialX;
-                        currentY = e.clientY - initialY;
+                        currentX = e.clientX - centerX - initialX;
+                        currentY = e.clientY - centerY - initialY;
                     }
 
                     xOffset = currentX;
@@ -682,8 +703,10 @@
             function dragTouch(e) {
                 if (isDragging) {
                     e.preventDefault();
-                    currentX = e.touches[0].clientX - initialX;
-                    currentY = e.touches[0].clientY - initialY;
+                    const centerX = window.innerWidth / 2;
+                    const centerY = window.innerHeight / 2;
+                    currentX = e.touches[0].clientX - centerX - initialX;
+                    currentY = e.touches[0].clientY - centerY - initialY;
                     xOffset = currentX;
                     yOffset = currentY;
                     setTranslate(currentX, currentY, playerContainer);
@@ -704,7 +727,7 @@
             }
 
             function setTranslate(xPos, yPos, el) {
-                el.style.transform = `translate(${xPos}px, ${yPos}px)`;
+                el.style.transform = `translate(-50%, -50%) translate(${xPos}px, ${yPos}px)`;
             }
 
             // Prevent dragging when clicking on interactive elements
@@ -818,19 +841,21 @@
                     
                     void main() {
                         vec2 uv = gl_FragCoord.xy / u_resolution;
-                        vec3 color = vec3(0.0);
+                        vec3 color = u_bgColor;
                         
-                        // Audio frequency bars
+                        // Audio frequency bars - mirror effect
                         float barWidth = 1.0 / 128.0;
                         int barIndex = int(uv.x / barWidth);
                         if (barIndex >= 0 && barIndex < 128) {
                             float freq = u_audioData[barIndex];
-                            float barHeight = freq * 0.5;
+                            float barHeight = freq * 0.6;
                             float dist = abs(uv.y - 0.5);
                             if (dist < barHeight) {
                                 float intensity = 1.0 - (dist / barHeight);
+                                intensity = pow(intensity, 2.0);
                                 float hue = float(barIndex) / 128.0 + u_time * 0.1;
-                                color += hsv2rgb(vec3(hue, 0.8, intensity * 0.8));
+                                vec3 barColor = hsv2rgb(vec3(hue, 0.9, 1.0));
+                                color = mix(color, barColor, intensity * 0.9);
                             }
                         }
                         
@@ -847,14 +872,13 @@
                                 if (dist < size) {
                                     float intensity = (1.0 - dist / size) * life;
                                     float sparkle = sin(u_time * 10.0 + float(i)) * 0.5 + 0.5;
-                                    color += vec3(1.0, 0.8, 0.2) * intensity * sparkle * 2.0;
+                                    vec3 fireworkColor = vec3(1.0, 0.8, 0.2) * intensity * sparkle * 3.0;
+                                    color += fireworkColor;
                                 }
                             }
                         }
                         
-                        // Background color
-                        color = mix(u_bgColor, color, 0.8);
-                        fragColor = vec4(color, 0.9);
+                        fragColor = vec4(color, 0.95);
                     }
                 `;
                 
@@ -977,41 +1001,67 @@
             }
 
             setupAudioAnalyzer() {
-                const howlContext = Howler.ctx;
-                if (!howlContext) {
-                    console.warn('Howler audio context not available');
-                    return;
-                }
-
-                this.audioContext = howlContext;
-                
-                if (!this.analyser) {
-                    this.analyser = this.audioContext.createAnalyser();
-                    this.analyser.fftSize = 512;
-                    this.analyser.smoothingTimeConstant = 0.8;
-                    const bufferLength = this.analyser.frequencyBinCount;
-                    this.dataArray = new Uint8Array(bufferLength);
-                }
-
                 try {
-                    this.analyser.disconnect();
-                } catch(e) {}
-                this.analyser.connect(this.audioContext.destination);
-                
-                const masterGain = Howler.masterGain;
-                if (masterGain) {
-                    try {
-                        masterGain.disconnect();
-                        masterGain.connect(this.analyser);
-                    } catch(e) {
-                        console.warn('Could not reconnect master gain:', e);
+                    // Try to get or create audio context from Howler
+                    if (!Howler.ctx) {
+                        // Resume audio context if suspended
+                        if (Howler.ctx && Howler.ctx.state === 'suspended') {
+                            Howler.ctx.resume();
+                        }
                     }
+                    
+                    const howlContext = Howler.ctx;
+                    if (!howlContext) {
+                        console.warn('Howler audio context not available yet');
+                        return;
+                    }
+
+                    this.audioContext = howlContext;
+                    console.log('✅ Audio context obtained:', this.audioContext.state);
+                    
+                    // Create analyzer if not exists
+                    if (!this.analyser) {
+                        this.analyser = this.audioContext.createAnalyser();
+                        this.analyser.fftSize = 256;
+                        this.analyser.smoothingTimeConstant = 0.85;
+                        const bufferLength = this.analyser.frequencyBinCount;
+                        this.dataArray = new Uint8Array(bufferLength);
+                        console.log('✅ Analyser created, buffer length:', bufferLength);
+                    }
+
+                    // Connect the analyser to the audio chain
+                    const masterGain = Howler.masterGain;
+                    if (masterGain) {
+                        try {
+                            // Disconnect existing connections
+                            masterGain.disconnect();
+                        } catch(e) {
+                            console.log('No previous connections to disconnect');
+                        }
+                        
+                        try {
+                            // Connect master gain through analyser to destination
+                            masterGain.connect(this.analyser);
+                            this.analyser.connect(this.audioContext.destination);
+                            console.log('✅ Audio chain connected: masterGain -> analyser -> destination');
+                        } catch(e) {
+                            console.error('Could not connect audio chain:', e);
+                        }
+                    } else {
+                        console.warn('Master gain not available');
+                    }
+                } catch (error) {
+                    console.error('Error setting up audio analyzer:', error);
                 }
             }
 
             updateAudioData() {
                 if (!this.analyser || !this.dataArray) return;
-                this.analyser.getByteFrequencyData(this.dataArray);
+                try {
+                    this.analyser.getByteFrequencyData(this.dataArray);
+                } catch (e) {
+                    console.warn('Error getting frequency data:', e);
+                }
             }
 
             createFirework(x, y) {
@@ -1068,8 +1118,8 @@
                 this.updateFireworks(deltaTime);
                 this.updateBackgroundColorTransition();
 
-                // Clear
-                gl.clearColor(this.bgColor.r, this.bgColor.g, this.bgColor.b, 1.0);
+                // Clear with semi-transparent background
+                gl.clearColor(this.bgColor.r, this.bgColor.g, this.bgColor.b, 0.7);
                 gl.clear(gl.COLOR_BUFFER_BIT);
 
                 // Use program
@@ -1166,7 +1216,7 @@
                 this.updateBackgroundColorTransition();
                 
                 const bg = this.bgColor;
-                ctx.fillStyle = `rgba(${Math.floor(bg.r * 255)}, ${Math.floor(bg.g * 255)}, ${Math.floor(bg.b * 255)}, 1.0)`;
+                ctx.fillStyle = `rgba(${Math.floor(bg.r * 255)}, ${Math.floor(bg.g * 255)}, ${Math.floor(bg.b * 255)}, 0.7)`;
                 ctx.fillRect(0, 0, width, height);
                 
                 if (this.dataArray && this.analyser) {
@@ -1176,12 +1226,16 @@
                         
                         for (let i = 0; i < 128; i++) {
                             const value = this.dataArray[i] / 255;
-                            const barHeight = Math.pow(value, 0.5) * height * 0.4;
+                            const barHeight = Math.pow(value, 0.5) * height * 0.5;
                             const hue = (i / 128) * 360 + (this.time || 0) * 50;
-                            ctx.fillStyle = `hsl(${hue % 360}, 80%, ${50 + value * 30}%)`;
-                            ctx.fillRect(i * barWidth, height / 2 - barHeight / 2, barWidth - 1, barHeight);
+                            const saturation = 85;
+                            const lightness = 50 + value * 40;
+                            ctx.fillStyle = `hsla(${hue % 360}, ${saturation}%, ${lightness}%, 0.9)`;
+                            ctx.fillRect(i * barWidth, height / 2 - barHeight / 2, Math.max(1, barWidth - 1), barHeight);
                         }
-                    } catch (e) {}
+                    } catch (e) {
+                        console.warn('Error drawing bars:', e);
+                    }
                 }
                 
                 for (const fw of this.fireworks) {
