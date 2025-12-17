@@ -98,6 +98,21 @@
         let soundId = null; // Howler.js sound ID for seeking
         let progressInterval = null;
 
+        // Helper function to proxy GitHub URLs in production (for CORS)
+        function getAudioUrl(url) {
+            const isProduction = window.location.hostname.includes('vercel.app') || 
+                                window.location.hostname.includes('vercel.com');
+            
+            // If in production and URL is from GitHub releases, use proxy
+            if (isProduction && url && url.includes('github.com') && url.includes('/releases/download/')) {
+                const baseUrl = window.location.origin;
+                return `${baseUrl}/api/proxy?url=${encodeURIComponent(url)}`;
+            }
+            
+            // Otherwise, use the URL as-is
+            return url;
+        }
+
         // Load playlist from playlist.json
         async function loadPlaylist(keepCurrentTrack = false) {
             try {
@@ -165,7 +180,7 @@
             // Load durations for all tracks using Howler
             playlist.forEach((track, index) => {
                 const tempSound = new Howl({
-                    src: [track.file],
+                    src: [getAudioUrl(track.file)],
                     html5: false, // Use Web Audio API
                     preload: true,
                     onload: function() {
@@ -221,7 +236,7 @@
             
             // Create new Howler sound instance with better streaming options
             sound = new Howl({
-                src: [track.file],
+                src: [getAudioUrl(track.file)],
                 html5: false, // Use Web Audio API for visualizer support
                 preload: true, // Preload for better performance
                 autoplay: false,
